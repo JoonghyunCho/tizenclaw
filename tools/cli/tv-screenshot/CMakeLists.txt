@@ -1,0 +1,7 @@
+SET(INSTALL_DIR
+  "/opt/usr/share/tizen-tools/cli/tv-screenshot")
+
+INSTALL(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/tv-screenshot"
+  DESTINATION ${INSTALL_DIR})
+INSTALL(FILES "${CMAKE_CURRENT_SOURCE_DIR}/tool.md"
+  DESTINATION ${INSTALL_DIR})
