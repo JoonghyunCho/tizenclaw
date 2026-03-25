@@ -43,7 +43,14 @@ nlohmann::json GeminiBackend::ToGeminiContents(
 
     if (msg.role == "user") {
       entry["role"] = "user";
-      entry["parts"] = {{{"text", msg.text}}};
+      nlohmann::json parts = nlohmann::json::array();
+      parts.push_back({{"text", msg.text}});
+      for (auto& img : msg.images) {
+        parts.push_back({{"inline_data",
+            {{"mime_type", img.mime_type},
+             {"data", img.base64}}}});
+      }
+      entry["parts"] = parts;
     } else if (msg.role == "assistant") {
       entry["role"] = "model";
       if (!msg.tool_calls.empty()) {

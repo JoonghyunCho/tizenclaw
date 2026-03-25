@@ -61,7 +61,7 @@ void PrintHelp() {
       "[--delay MS]\", \"common_keys\": {"
       "\"up\": 111, \"down\": 116, "
       "\"left\": 113, \"right\": 114, "
-      "\"back\": 9, \"prior\": 112, "
+      "\"ok\": 36, \"back\": 9, \"prior\": 112, "
       "\"next\": 117, \"end\": 115, "
       "\"sys_menu\": 133, \"simple_menu\": 135, "
       "\"channel_guide\": 138, \"exit\": 182, "

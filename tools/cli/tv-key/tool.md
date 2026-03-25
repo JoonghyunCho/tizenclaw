@@ -25,8 +25,9 @@ tv-key <keycode> [--repeat N] [--delay MS]
 |-----|------|-----|------|
 | Up | `111` | Down | `116` |
 | Left | `113` | Right | `114` |
+| Return/OK | `36` | Back (XF86Back) | `9` |
 | Prior (Page Up) | `112` | Next (Page Down) | `117` |
-| Back (XF86Back) | `9` | End | `115` |
+| End | `115` | | |
 
 ### System
 

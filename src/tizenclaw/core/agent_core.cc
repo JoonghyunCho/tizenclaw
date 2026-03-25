@@ -49,8 +49,96 @@
 
 namespace tizenclaw {
 
+namespace {
+
+// ── Vision helpers: auto-detect image paths in tool results ──
+
+static const std::vector<std::string> kImageExtensions = {
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"};
+
+bool IsImagePath(const std::string& s) {
+  if (s.size() < 5) return false;
+  for (auto& ext : kImageExtensions) {
+    if (s.size() >= ext.size() &&
+        s.compare(s.size() - ext.size(), ext.size(), ext) == 0) {
+      return std::filesystem::exists(s);
+    }
+  }
+  return false;
+}
+
+void CollectImagePaths(const nlohmann::json& j,
+                       std::vector<std::string>& paths) {
+  if (j.is_string()) {
+    auto s = j.get<std::string>();
+    if (IsImagePath(s)) paths.push_back(s);
+  } else if (j.is_object()) {
+    for (auto& [k, v] : j.items()) {
+      CollectImagePaths(v, paths);
+    }
+  } else if (j.is_array()) {
+    for (auto& el : j) {
+      CollectImagePaths(el, paths);
+    }
+  }
+}
+
+std::vector<std::string> ExtractImagePaths(
+    const nlohmann::json& tool_result) {
+  std::vector<std::string> paths;
+  CollectImagePaths(tool_result, paths);
+  return paths;
+}
+
+static const char kBase64Table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"
+    "opqrstuvwxyz0123456789+/";
+
+std::string Base64Encode(const std::vector<uint8_t>& data) {
+  std::string out;
+  out.reserve(((data.size() + 2) / 3) * 4);
+  for (size_t i = 0; i < data.size(); i += 3) {
+    uint32_t b = static_cast<uint32_t>(data[i]) << 16;
+    if (i + 1 < data.size()) b |= static_cast<uint32_t>(data[i + 1]) << 8;
+    if (i + 2 < data.size()) b |= static_cast<uint32_t>(data[i + 2]);
+    out += kBase64Table[(b >> 18) & 0x3F];
+    out += kBase64Table[(b >> 12) & 0x3F];
+    out += (i + 1 < data.size()) ? kBase64Table[(b >> 6) & 0x3F] : '=';
+    out += (i + 2 < data.size()) ? kBase64Table[b & 0x3F] : '=';
+  }
+  return out;
+}
+
+LlmMessage::ImageData LoadImageAsBase64(const std::string& path) {
+  LlmMessage::ImageData img;
+  std::ifstream file(path, std::ios::binary);
+  if (!file.is_open()) return img;
+
+  std::vector<uint8_t> data(
+      (std::istreambuf_iterator<char>(file)),
+      std::istreambuf_iterator<char>());
+  if (data.empty()) return img;
+
+  // Determine MIME type from extension
+  std::string ext = std::filesystem::path(path).extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+  if (ext == ".png") img.mime_type = "image/png";
+  else if (ext == ".jpg" || ext == ".jpeg") img.mime_type = "image/jpeg";
+  else if (ext == ".webp") img.mime_type = "image/webp";
+  else if (ext == ".gif") img.mime_type = "image/gif";
+  else img.mime_type = "image/png";
+
+  img.base64 = Base64Encode(data);
+  LOG(INFO) << "Loaded image for vision: " << path
+            << " (" << data.size() << " bytes)";
+  return img;
+}
+
+}  // namespace
+
 AgentCore::AgentCore()
     : container_(std::make_unique<ContainerEngine>()), initialized_(false) {}
+
 
 AgentCore::~AgentCore() {
   Shutdown();
@@ -778,8 +866,54 @@ std::string AgentCore::ProcessPrompt(
             {{"output", result.output}};
       }
 
+      // Vision: detect image paths in tool result and attach
+      auto image_paths = ExtractImagePaths(tool_msg.tool_result);
+      for (auto& img_path : image_paths) {
+        auto img_data = LoadImageAsBase64(img_path);
+        if (!img_data.base64.empty()) {
+          tool_msg.images.push_back(std::move(img_data));
+        }
+      }
+
       tool_msgs.push_back(tool_msg);
-      local_history.push_back(tool_msg);
+    }
+
+    // Collect images from tool results into a synthetic
+    // user message (Gemini requires images in user turns,
+    // not function response turns)
+    LlmMessage vision_msg;
+    bool has_vision = false;
+    for (auto& tm : tool_msgs) {
+      if (!tm.images.empty()) {
+        for (auto& img : tm.images) {
+          vision_msg.images.push_back(std::move(img));
+        }
+        tm.images.clear();
+        has_vision = true;
+      }
+    }
+
+    // Add tool results to local history (without images)
+    for (auto& tm : tool_msgs) {
+      local_history.push_back(tm);
+    }
+
+    // If images were found, add a synthetic user message
+    // with the images for the next LLM call
+    if (has_vision) {
+      vision_msg.role = "user";
+      vision_msg.text =
+          "The screenshot from the tool result is "
+          "attached. Analyze what you see on screen "
+          "and continue the task.";
+      local_history.push_back(vision_msg);
+      // Clear images before storing to session
+      // (prevents base64 accumulation across turns)
+      LlmMessage vision_stored = vision_msg;
+      vision_stored.images.clear();
+      vision_stored.text =
+          "[Screenshot analyzed in this turn]";
+      tool_msgs.push_back(vision_stored);
     }
 
     {
@@ -1209,7 +1343,15 @@ std::string AgentCore::LoadSystemPrompt(const nlohmann::json& config) {
          "documentation on Tizen APIs in your knowledge base; "
          "use the search_knowledge tool for Tizen Native API queries. "
          "Always respond in the same language as the user's message. "
-         "Be concise and helpful.";
+         "Be concise and helpful.\n\n"
+         "## Vision Capability\n"
+         "You have multimodal vision capability. When a tool result "
+         "contains an image file path (e.g. screenshot), the image "
+         "is automatically attached to the conversation. You CAN "
+         "and SHOULD analyze these images to understand what is "
+         "displayed on screen. Use this to guide navigation, "
+         "identify UI elements, read text, and make decisions "
+         "about which keys to press or actions to take.";
 }
 
 std::string AgentCore::LoadRoutingGuide() {

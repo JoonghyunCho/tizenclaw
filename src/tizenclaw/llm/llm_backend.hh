@@ -43,6 +43,13 @@ struct LlmMessage {
   std::string tool_name;
   std::string tool_call_id;  // ID of the tool_call this result responds to
   nlohmann::json tool_result;
+
+  // Multimodal: attached images (base64-encoded)
+  struct ImageData {
+    std::string base64;     // base64-encoded image bytes
+    std::string mime_type;  // "image/png", "image/jpeg"
+  };
+  std::vector<ImageData> images;
 };
 
 struct LlmResponse {

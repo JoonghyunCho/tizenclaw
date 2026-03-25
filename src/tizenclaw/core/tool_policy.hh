@@ -35,11 +35,11 @@ struct ToolPolicyConfig {
   // Per-skill risk level overrides
   std::map<std::string, RiskLevel> risk_levels;
   // Max repeated calls (same skill + same args)
-  int max_repeat_count = 3;
+  int max_repeat_count = 15;
   // Skills blocked entirely
   std::set<std::string> blocked_skills;
   // Max agentic loop iterations
-  int max_iterations = 5;
+  int max_iterations = 30;
   // Tool alias redirections: old_name -> new_name
   std::map<std::string, std::string> aliases;
 };
@@ -104,7 +104,7 @@ class ToolPolicy {
   // Track iteration outputs for idle detection
   // session_id -> recent iteration signatures
   std::map<std::string, std::vector<std::string>> idle_history_;
-  static constexpr int kIdleWindowSize = 3;
+  static constexpr int kIdleWindowSize = 5;
 
   std::mutex mutex_;
 };
